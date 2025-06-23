@@ -1,0 +1,156 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "contentVersion": "1.0.0.0",
+        "triggers": {
+            "Recurrence": {
+                "type": "Recurrence",
+                "recurrence": {
+                    "frequency": "Day",
+                    "interval": 1,
+                    "startTime": "2024-01-01T07:00:00Z",
+                    "timeZone": "Central Europe Standard Time",
+                    "schedule": {
+                        "hours": [
+                            7
+                        ]
+                    }
+                }
+            }
+        },
+        "actions": {
+            "Run_query_and_list_results": {
+                "type": "ApiConnection",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
+                        }
+                    },
+                    "method": "post",
+                    "body": "UCClientUpdateStatus\n| where isnotnull(RestartRequiredTime)\n| where isnull(UpdateInstalledTime) or UpdateInstalledTime < RestartRequiredTime\n| project DeviceName, RestartRequiredTime\n",
+                    "path": "/queryData",
+                    "queries": {
+                        "subscriptions": "@parameters('SubscriptionID')",
+                        "resourcegroups": "@parameters('ResourceGroupName')",
+                        "resourcetype": "Log Analytics Workspace",
+                        "resourcename": "@parameters('LogAnalyticsWorkspaceName')",
+                        "timerange": "Last 24 hours",
+                        "api-version": "2023-03-01-preview"
+                    }
+                },
+                "runAfter": {}
+            },
+            "Condition": {
+                "type": "If",
+                "expression": {
+                    "and": [
+                        {
+                            "equals": [
+                                "@greater(length(body('Run_query_and_list_results')?['value']), 0)",
+                                ""
+                            ]
+                        }
+                    ]
+                },
+                "actions": {
+                    "Compose": {
+                        "type": "Compose",
+                        "inputs": "@body('Run_query_and_list_results')\n"
+                    },
+                    "Create_CSV_table": {
+                        "type": "Table",
+                        "inputs": {
+                            "from": "@body('Run_query_and_list_results')?['value']\n",
+                            "format": "CSV"
+                        },
+                        "runAfter": {
+                            "Compose": [
+                                "Succeeded"
+                            ]
+                        }
+                    },
+                    "Send_email": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                            "host": {
+                                "connection": {
+                                    "name": "@parameters('$connections')['acsemail']['connectionId']"
+                                }
+                            },
+                            "method": "post",
+                            "body": {
+                                "senderAddress": "@parameters('SenderEmail')",
+                                "recipients": {
+                                    "to": [
+                                        {
+                                            "address": "@parameters('RecepientEmail')"
+                                        }
+                                    ]
+                                },
+                                "content": {
+                                    "subject": "Devices with pending reboot",
+                                    "html": "<p class=\"editor-paragraph\">Attached is the list of devices that are pending reboot.</p>"
+                                },
+                                "importance": "Normal",
+                                "attachments": [
+                                    {
+                                        "name": "PendingRebootDevices.csv",
+                                        "contentType": "CSV",
+                                        "contentInBase64": "@base64(body('Create_CSV_table'))"
+                                    }
+                                ]
+                            },
+                            "path": "/emails:sendGAVersion",
+                            "queries": {
+                                "api-version": "2023-03-31"
+                            }
+                        },
+                        "runAfter": {
+                            "Create_CSV_table": [
+                                "Succeeded"
+                            ]
+                        }
+                    }
+                },
+                "else": {
+                    "actions": {}
+                },
+                "runAfter": {
+                    "Run_query_and_list_results": [
+                        "Succeeded"
+                    ]
+                }
+            }
+        },
+        "outputs": {},
+        "parameters": {
+            "SubscriptionID": {
+                "type": "String",
+                "defaultValue": "YourSubscriptionID"
+            },
+            "ResourceGroupName": {
+                "type": "String",
+                "defaultValue": "YourResourceGroupName"
+            },
+            "LogAnalyticsWorkspaceName": {
+                "type": "String",
+                "defaultValue": "YourLAWName"
+            },
+            "SenderEmail": {
+                "type": "String",
+                "defaultValue": "sender@domain.com"
+            },
+            "RecepientEmail": {
+                "type": "String",
+                "defaultValue": "recipient@domain.com"
+            },
+            "$connections": {
+                "type": "Object",
+                "defaultValue": {}
+            }
+        }
+    },
+    "parameters": {
+    }
+}
